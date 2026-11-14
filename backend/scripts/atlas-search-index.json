@@ -1,0 +1,64 @@
+{
+  "name": "listings_search",
+  "database": "trust_bazar",
+  "collectionName": "listings",
+  "mappings": {
+    "dynamic": false,
+    "fields": {
+      "title": [
+        {
+          "type": "string",
+          "analyzer": "lucene.bengali"
+        },
+        {
+          "type": "autocomplete",
+          "tokenization": "edgeGram",
+          "minGrams": 2,
+          "maxGrams": 15,
+          "foldDiacritics": false
+        }
+      ],
+      "description": {
+        "type": "string",
+        "analyzer": "lucene.bengali"
+      },
+      "status": {
+        "type": "token"
+      },
+      "categoryId": {
+        "type": "objectId"
+      },
+      "condition": {
+        "type": "token"
+      },
+      "price": {
+        "type": "number"
+      },
+      "location": {
+        "type": "document",
+        "fields": {
+          "district": {
+            "type": "token"
+          },
+          "geo": {
+            "type": "geo"
+          }
+        }
+      },
+      "boost": {
+        "type": "document",
+        "fields": {
+          "active": {
+            "type": "boolean"
+          },
+          "until": {
+            "type": "date"
+          }
+        }
+      },
+      "createdAt": {
+        "type": "date"
+      }
+    }
+  }
+}
