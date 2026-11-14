@@ -45,7 +45,7 @@
 | 14 | Moderation & Enforcement | reports, ladder, 4-eyes ban, appeals, support | ☑ |
 | 15 | Notifications & Jobs | 17 events, 12 queues, schedules | ☑ |
 | 16 | Audit, Platform & Ops APIs | hash chain, config, ops endpoints | ☑ |
-| 17 | Web Foundation & Public Pages | Next.js setup, SEO pages, i18n | ☐ |
+| 17 | Web Foundation & Public Pages | Next.js setup, SEO pages, i18n | ☑ |
 | 18 | Web Auth, Buyer & Seller Flows | verified flows, error UX | ☐ |
 | 19 | Ops Console UI | KYC/moderation/appeals/audit screens | ☐ |
 | 20 | Mobile App (Expo) | parity with web, store readiness | ☐ |
@@ -507,13 +507,13 @@
 **Read first:** PRD NFR-07 · Architecture §3
 
 **Do**
-- [ ] Next.js App Router + TS + Tailwind + `next-intl` (bn default, en toggle) + `@tanstack/react-query`; ৳ formatting.
-- [ ] Design tokens: colors, type scale, spacing, radius, shadows; shared `Button/Input/Modal/Toast/Badge/Card/Skeleton/EmptyState`.
-- [ ] Public routes (SSR/ISR): `/`, `/category/[slug]`, `/search`, `/listings/[id]`, `/login`, `/legal/terms`, `/legal/privacy`, `/legal/prohibited`.
-- [ ] Listing detail: gallery, price, condition, seller card (verified badge, member since, other listings), map, Contact CTA; boosted block above organic.
-- [ ] SEO: metadata, OpenGraph, sitemap, robots, canonical URLs, listing structured data.
-- [ ] States for every page: loading skeleton, empty, error, offline.
-- [ ] Legal pages content sourced from Pre-Launch_Actions.md drafts.
+- [x] Next.js App Router + TS + Tailwind + `next-intl` (bn default, en toggle) + `@tanstack/react-query`; ৳ formatting.
+- [x] Design tokens: colors, type scale, spacing, radius, shadows; shared `Button/Input/Modal/Toast/Badge/Card/Skeleton/EmptyState`.
+- [x] Public routes (SSR/ISR): `/`, `/category/[slug]`, `/search`, `/listings/[id]`, `/login`, `/legal/terms`, `/legal/privacy`, `/legal/prohibited`.
+- [x] Listing detail: gallery, price, condition, seller card (verified badge, member since, other listings), map, Contact CTA; boosted block above organic.
+- [x] SEO: metadata, OpenGraph, sitemap, robots, canonical URLs, listing structured data.
+- [x] States for every page: loading skeleton, empty, error, offline.
+- [x] Legal pages content sourced from Pre-Launch_Actions.md drafts.
 
 **Acceptance**
 - Lighthouse SEO ≥90 on listing detail.

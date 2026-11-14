@@ -62,3 +62,20 @@
 - ☑ KPI: direct deals and timed-out `unconfirmed` rows excluded from `confirmedDeals`
 - ☑ `deals.test.ts` 11/11; full backend 141/141; typecheck + lint clean
 - ☑ Docs: `API_spec.md` v1.6 §13.7; `prompt.md` row 12 + PROMPT 12 checkboxes ☑
+
+## PROMPT 17 — Web Foundation & Public Pages
+- ☑ `web` app in the pnpm workspace: Next.js 16 App Router, React 19, TS 5.7, Tailwind v4 (`@theme` tokens), `@trust/shared` transpiled
+- ☑ `next-intl` v4: `bn` default + `en`, `/` → `/bn`, `localePrefix: 'always'`, `NEXT_LOCALE` cookie (1 year) persists the toggle
+- ☑ Design tokens (brand/ink/surface/line, type scale, radii, shadows) + UI kit `Button/Input/Modal/Toast/Badge/Card/Skeleton/EmptyState`
+- ☑ Public routes: `/`, `/category/[slug]`, `/search`, `/listings/[id]`, `/login`, `/legal/{terms,privacy,prohibited}`; unknown routes/listing → 404 page
+- ☑ Listing detail: gallery, price (৳ + bn digits), condition, seller card (verified badge, member since, other listings), map/contact CTA, boosted block above organic
+- ☑ SEO: per-page metadata, OpenGraph/Twitter, canonical + hreflang alternates, `robots.txt`, `sitemap.xml` (62 URLs incl. hreflang pairs), `Product`/`BreadcrumbList`/`WebSite` JSON-LD
+- ☑ States on every page: loading skeleton (search/category), empty, error + retry, offline banner
+- ☑ Legal copy sourced from `Pre-Launch_Actions.md` drafts (bn/en, prohibited 16-item table)
+- ☑ `pnpm -C web typecheck` + `pnpm -C web lint` clean (one benign `no-console` warning in `error.tsx`)
+- ☑ `pnpm -C web build` succeeds with the backend down (soft-fail fetch paths)
+- ☑ Live check (temp demo listing, removed afterwards): `/bn/listings/<id>` view-source has title + ৳, bn/en differ, cookie set on `/`, category/search/sitemap/robots 200
+- ☑ Lighthouse SEO **100** (mobile + desktop) on `/bn/listings/<id>`
+- ☑ Root regression: `pnpm typecheck` + `pnpm lint` clean; backend 141/141 (auth suite re-run once after a transient DNS `ESERVFAIL`)
+- ☑ `.env.example` web vars (`API_BASE_URL`, `NEXT_PUBLIC_SITE_URL`, `WEB_PORT`); `API_spec.md` unchanged
+

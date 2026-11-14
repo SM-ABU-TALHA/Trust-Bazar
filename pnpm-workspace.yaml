@@ -7,6 +7,8 @@ packages:
 allowBuilds:
   esbuild: true
   msgpackr-extract: true
+  '@parcel/watcher': true
+  '@swc/core': true
 
 # Single `mongodb` copy — mongoose otherwise pulls its own, and the two
 # `Db` types are structurally incompatible at TS boundaries.

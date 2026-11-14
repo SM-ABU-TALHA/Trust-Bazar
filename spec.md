@@ -1,223 +1,116 @@
-# Spec — PROMPT 13–16: Payments · Moderation · Notifications/Jobs · Audit & Ops
+# Spec — PROMPT 17: Web Foundation & Public Pages
 
 **Status:** awaiting approval
-**Scope:** money paths (boost + credits + webhooks + recon), moderation/enforcement/appeals/support, notification event bus + 12 job queues, tamper-evident audit and operator API surface.
-**Non-goals:** PROMPT 12 (deals/KPI — explicitly skipped, stays ☐), ops console UI (PROMPT 19), mobile/web clients (17–20).
+**Scope:** new `web/` app — Next.js App Router + TS + Tailwind + next-intl (bn default, en toggle) + react-query; design tokens + UI kit; SSR/ISR public routes; listing detail; SEO; page states; legal pages.
+**Non-goals:** authenticated web flows (PROMPT 18), ops console UI (19), mobile (20), any backend endpoint/model change (PROMPT 01–16 are frozen).
 
-**Source refs:** `prompt.md` PROMPT 13–16 · `API_spec.md` §4, §8–§13 · `database.md` §2.7–2.14, §4 · `PRD.md` §3.3.9, §3.3.11, §3.4.5–3.4.6, §3.6, Appx B, Appx D · `Architecture.md` §4.2, §7, §8.
+**Source refs:** `prompt.md` §PROMPT 17 · `PRD.md` NFR-07/NFR-10/NFR-11 · `Architecture.md` §3 · `API_spec.md` §3.8–3.12, §13.1 · `Pre-Launch_Actions.md` §A.2–A.3.
 
 ---
 
-## 0. Cross-cutting decisions
+## 0. Decisions (decision-complete)
 
 | Topic | Decision |
 |---|---|
-| Response envelope | `{data, meta:{requestId}}`; 204 for no-body actions; RFC-7807 via existing `err.*`. |
-| New error types | `err.upgradeRequired(min)` → 426 `upgrade_required`; `err.pendingApproval(detail)` → 202 semantics handled in service response (not an error). |
-| Operator auth | `POST /ops/auth/login {email, totp}` → operator JWT `{sub, role, typ:'ops'}` 15 min, signed with `JWT_ACCESS_SECRET`. `requireOperator(...roles)` rejects non-`ops` tokens, inactive operators and IPs outside the allowlist. No self-signup — accounts exist only via seed/DB. |
-| Operator roles | `kycReviewer \| moderator \| seniorModerator \| superadmin` (`OPERATOR_ROLES` gains `superadmin`; model enum aligned). Ban = moderator proposes + seniorModerator/superadmin approves (4-eyes). Audit viewer + config editor = `superadmin`. |
-| Webhook ingress | Raw body mounted **before** `express.json` (same pattern as Porichoy): `POST /api/v1/webhooks/payments/:provider`. Signature `HMAC-SHA256(rawBody, <PROVIDER>_WEBHOOK_SECRET)` hex in `x-bkash-signature` / `x-nagad-signature`; optional IP allowlist. Always `200 {received:true}` after raw archive; processing runs async. |
-| Idempotency | `notifications.dedupeKey` **unique sparse** is the single dedupe primitive for events, coalescing, digests and job alerts. `webhookEvents (gateway,eventId)` unique is the payment-write dedupe. |
-| Job runtime | 12 named queues with schedules (`JOB_SCHEDULES`). When `WORKER=true && REDIS_URL` → BullMQ repeatable jobs; otherwise an in-process scheduler owning the same handlers. Handlers are exported and callable directly (`runJob(name)`) so tests need no Redis. Every handler is idempotent; failures alert ops via `ops.job_failed` notification and are retried on the next tick. |
-| Quiet hours | 22:00–08:00 Asia/Dhaka suppress `push`/`sms` for non-critical events; `inApp` is always written. Critical (bypass): `otp`, `security.*`, `enforcement.*`, `ops.*`, `payment.*`. |
-| Localisation | Every template has `bn` + `en`; recipient language from `users.notificationPrefs.lang` (default `bn`). |
-| Audit | Every operator decision, config change, KYC document view, payment transition and audit view appends to `auditEvents` on the **separate** cluster (`appendAudit`, fail-soft). |
+| Versions | Next `16.4.6`, React `19`, TS `5.7.2`, Tailwind `4.3.5` (+`@tailwindcss/postcss`), `next-intl@4.15.1`, `@tanstack/react-query@5.107.1`, workspace `@trust/shared`. |
+| Workspace | `web/` already listed in `pnpm-workspace.yaml`. New `web/package.json` with `dev/build/start/lint/typecheck` scripts. Next config sets `transpilePackages: ['@trust/shared']`. |
+| Locales | `bn` default, `en` secondary. `localePrefix: 'always'` → `/bn/...`, `/en/...`; `/` → `/bn` via middleware. Locale lives in the URL (persistent + shareable + hreflang-able); switcher also writes `NEXT_LOCALE` cookie (1 year) so a return visit to `/` lands on the last language. |
+| i18n plumbing | `src/i18n/routing.ts` (`defineRouting`), `src/i18n/request.ts` (`getRequestConfig` → `messages/{locale}.json`), `src/i18n/navigation.ts` (`createNavigation`). Middleware in `src/proxy.ts` (Next 16 proxy convention; if build reports it as unrecognised, move to `src/middleware.ts` unchanged). |
+| API base | Server-only `API_BASE_URL` (default `http://localhost:4000/api/v1`); no client secret. Public reads only: `GET /listings/trending`, `/listings/search`, `/listings/:id`, `/listings/price-baseline`. `NEXT_PUBLIC_SITE_URL` (default `http://localhost:3000`) drives canonical/OG/sitemap. |
+| API failure policy | Every fetch is wrapped in `safeFetch` returning `{ok:true,data}` or `{ok:false, kind:'offline'\|'error'\|'notfound'}`. No fetch failure may fail `next build`; pages render `ErrorState`/`EmptyState` instead. |
+| Category slug → ObjectId | `categories._id` is deterministic: `sha256(slug).slice(0,24)` (seed.ts). `src/lib/categories.ts` (server-only) mirrors this with `node:crypto`, exposes `categoryBySlug`, `topCategories`, `localizedName`. Comment links back to `backend/scripts/seed.ts`; no backend change. |
+| Caching | Home + category: ISR `revalidate = 60`. Listing detail: ISR `revalidate = 300`, `dynamicParams = true`, `generateStaticParams` → `[]` (on-demand). Search: SSR (`searchParams` → dynamic). Legal/login: static. |
+| Styling | Tailwind v4 CSS-first. All tokens declared in `globals.css` under `@theme` (brand/ink/surface/border/success/warning/danger colour ramps, type scale, spacing, radius, shadows). No ad-hoc hex values in components. |
+| Fonts | System stack incl. `'Hind Siliguri', 'Noto Sans Bengali', 'Noto Sans'` — no build-time font download (offline-safe, NFR-10). |
+| Currency | `formatBdt(value, locale)` → `৳ ১,২৩,৪৫৬` (bn, Bengali digits) / `৳ 123,456` (en) via `Intl.NumberFormat('bn-BD'\|'en-BD')`. Single helper in `src/lib/format.ts`. |
+| React Query | `QueryClientProvider` in a client `Providers` boundary; one real use: home trending rail (`initialData` from SSR, `staleTime` 5 min, refetch on focus). No client-side SEO content. |
+| Login page | Public shell only: phone field + consent links + inline notice that OTP sign-in opens with the account release. No fake success, no auth call (PROMPT 18 owns the flow). `noindex` on `/login`. |
+| Contact CTA | Guest sees "Log in to contact" → `/login`; phone number is never rendered (PRD §2.1). Button is a link — no dead handler. |
+| Map | No API key: OpenStreetMap `https://www.openstreetmap.org/export/embed.html?bbox=…&marker=lat,lng` iframe (`loading="lazy"`, `title`), plus "Open in Google Maps" link. Rendered only when `listing.geo` exists; otherwise district-only card with an explanatory line. |
+| Boosted block | `BoostedRail` above organic results/grid: only `boosted:true` cards, labelled "Sponsored/বিজ্ঞাপন"; organic grid follows. Boosted cards keep a visible badge. |
+| Images | Plain `<img>` with explicit width/height when known, `loading="lazy"`, `alt` from title. No `next/image` remote-host config (signed R2 URLs rotate; avoids build/runtime host allowlist failures). |
+| Accessibility | One `<h1>`/page, landmarks (`header/nav/main/footer`), skip link, visible focus rings, `aria-current` on nav, form labels, `aria-live` toast region, WCAG-AA contrast tokens. |
 
----
+## 1. Files (exact)
 
-## 1. API deltas (implemented contract)
-
-### Payments / boost (PROMPT 13)
-| Endpoint | Contract |
-|---|---|
-| `GET /boost/packages` | Auth: logged-in. `data = [{id,name,durationDays,price,placement,active}]` from `boostPackages` where `active:true`. |
-| `POST /boost/checkout` | Auth: `seller`, enforcement gate, `Idempotency-Key` required, rate `boost_checkout`. Body `{packageId, listingId, provider, creditApply?=true}`. Listing must belong to caller and be `active` → else 404 `listing_not_found` / 422 `listing_not_active`. Price from DB only. Credits auto-applied FIFO (`creditApplied = min(balance, price)`), remaining amount charged. Persists `payments{state:'initiated', idempotencyKey, listingId, amount:net, creditApplied, gatewayUrl, provider}`. Returns 201 `{paymentId,state:'initiated',gatewayUrl,creditApplied}`. |
-| `POST /webhooks/payments/:provider` | Signature+IP verified → store raw `webhookEvents` (unique dedupe) → 200 immediately → async `applyWebhook`. Invalid signature → 401 `forbidden` (archived with `signatureOk:false`, never processed). |
-| `GET /payments/:id` | Owner only (IDOR → 404). `{id,state,amount,creditApplied,provider,receiptNo,paidAt,boostUntil}`. |
-| `GET /payments/:id/receipt` | Owner, `success` only, within 12 months of `paidAt`; streams `application/pdf` (hand-rolled minimal PDF, no new dep); missing → 409 `receipt_not_available`. |
-| `GET /me/credits` | `{balance, entries:[{id,amount,remaining,source,reason,expiresAt,createdAt}]}`; balance = Σ remaining where `expiresAt>now`. |
-
-State machine (monotonic, enforced in one `applyState`): `initiated → pending|success|failed|expired`, `pending → success|failed|expired`; anything else → `409 state_conflict`. Success activation is a single atomic `findOneAndUpdate({_id, state:{$in:['initiated','pending']}})`; a replay finds no match and is a no-op. A `success→failed` replay is rejected (409) and audited.
-
-On success (single transaction-equivalent sequence, each step idempotent):
-1. payment `{state:'success', paidAt, receiptNo, gatewayRefs}`; 2. consume applied credits FIFO; 3. `listings.boost = {active:true, packageId, until: now+durationDays, pausedAt:null, remainingMs:null}`; 4. receipt number `TB-YYYYMM-<seq>`; 5. notifications `boost.activated`; 6. audit `payment.success`.
-
-Suspension/ban pause: `pauseBoosts(userId)` sets `pausedAt=now`, `remainingMs=max(0, until-now)`, `active:false`. `resumeBoosts(userId)` sets `until=now+remainingMs`, clears pause, `active:true` (only when enforcement lifted/expires).
-
-`recon(rows)` (nightly + `POST /ops/reconcile/payments`): rows `{trxId, reference, amount, state, userId?}`. For known payments, missing success is applied through `applyState`; unknown `success` rows with a resolvable user create a `credits` grant (`source:'reconciliation'`, reason = trxId, expiry +12 months) and notification `payment.reconciled_to_credit` — **never** a boost activation. Unresolvable rows → `ops.vendor_outage` style alert.
-
-### Reports / appeals / support (PROMPT 14)
-| Endpoint | Contract |
-|---|---|
-| `POST /reports` | Auth (gate allows reports only when not banned? decision: banned may still report? No — reports require non-banned, appeals/support are the banned escape hatch). Rate override 5/day. Body `{targetType,targetId,category,comment?}`. Same reporter + same target + open report → returns existing `{reportId, merged:true}` (no new case). Otherwise creates `reports` + `moderationCases{source:'report', refId, status:'open', slaDue:+48h, snapshot}`. Reporter identity never returned to the reported party (no endpoint exposes reports). 201 `{reportId}`. |
-| `POST /appeals` | Auth; allowed while suspended/banned (gate allowlist). Body `{type, referenceId, message}`. SLA = 24 h when the user is suspended, else 72 h. Duplicate open appeal for same reference → 409 `appeal_open_exists`. 201 `{appealId, slaDue}`. |
-| `GET /appeals/:id` | Owner only, else 404. Returns status, slaDue, resolution (never operator identity). |
-| `POST /support/tickets` | Auth; allowed while suspended/banned. Body `{category,subject,body,attachmentMediaId?}`; SLA +48 h. 201 `{ticketId,slaDue}`. |
-| `GET /me/support/tickets` | Owner list, newest first. |
-| `GET /support/tickets/:id/messages` | Owner only (404 otherwise). Returns embedded message thread. |
-| `POST /support/tickets/:id/messages` | Owner, ticket not closed; appends user message, re-opens status to `open`. 201. |
-
-### Notifications (PROMPT 15)
-| Endpoint | Contract |
-|---|---|
-| `GET /notifications?read=&limit=` | Own notifications newest first (default 50, max 100); `meta.unread`. |
-| `POST /notifications/:id/read` | Own only (404 otherwise), idempotent, 204. |
-| `POST /notifications/device-token` | `{token, platform:'fcm'\|'apns'}` appended to `users.pushTokens` (dedupe by token). 204. |
-
-### Ops (PROMPT 16, all operator-gated)
-| Endpoint | Role | Contract |
-|---|---|---|
-| `POST /ops/auth/login` | public | `{email,totp}` → `{token, role, expiresAt}`; bad TOTP/unknown/inactive/IP → 401 (no enumeration detail). |
-| `GET /ops/kyc?status=pending&claim=` | kycReviewer | Queue; `claim=true` sets `claimedBy`, `lockUntil=+5min`; rows locked by others excluded. |
-| `GET /ops/kyc/:id` | kycReviewer | Detail + signed media URLs; writes `kyc.document_view` audit. |
-| `POST /ops/kyc/:id/decide` | kycReviewer | `{decision:'approve'\|'reject', reasonCode?}`; reject requires reasonCode; approve grants `verifiedBuyer` (+`seller` for seller scope); reject sets `expiresAt=+90d`; notifications + audit. |
-| `GET /ops/moderation?status=` | moderator | Queue incl. SLA state. |
-| `POST /ops/moderation/:id/claim` | moderator | 5-min lock; 409 `case_claimed` when locked by another. |
-| `POST /ops/moderation/:id/action` | moderator (ban: 4-eyes) | `{action, reasonCode, note?}`. `warn`→`warned`; `suspend`→`suspended` until +7d + pause boosts; `delist`→listing `delisted`; `dismiss`→close. `ban` first call stores `pendingBan{proposedBy,reasonCode}` → 202 `{status:'pending_second_approval'}`; a different seniorModerator/superadmin repeating `ban` applies: user `banned`, seller listings `delisted`, threads `frozen`, boosts forfeited (`active:false`, `until:null`), NID hash retained for block. Same operator approving own proposal → 403 `second_approver_required`. |
-| `GET /ops/appeals`, `POST /ops/appeals/:id/decide` | seniorModerator/superadmin | `{outcome:'uphold'\|'reverse', reason}`; reverse lifts enforcement / re-opens KYC as `pending`; original audit immutable, reversal appended. |
-| `GET /ops/support`, `POST /ops/support/:id/reply` | moderator | Reply appends operator message, notification `support.reply`, audit `support.reply`. |
-| `GET /ops/audit?entityType=&entityId=&from=&to=` | superadmin | Read-only chain view; writes `audit.view`. |
-| `GET/PUT /ops/config` | superadmin | Public config keys (`minVersion`,`featureFlags`,`geoLaunch`); PUT validates `configUpdateSchema`, upserts, audits `config.update` with before/after, invalidates the `/config` cache in the same request. |
-| `POST /ops/reconcile/payments` | superadmin | Runs recon on demand, returns summary `{matched,orphanCredits,skipped}`. |
-
-Client-version gate: any `/api/v1/*` request carrying `X-App-Platform` + `X-App-Version` below `config.minVersion` → `426 upgrade_required`. Geo-launch: listing create/update district outside non-empty `geoLaunch` → `422 district_not_launched`.
-
----
-
-## 2. Files — create
-
-| File | Content |
-|---|---|
-| `backend/src/lib/totp.ts` | `generateTotp(secret, at?)`, `verifyTotp(secret, code, window=1)` — base32 decode + HMAC-SHA1, 30 s step, ±1 step. |
-| `backend/src/lib/pdf.ts` | `buildReceiptPdf(lines: string[]): Buffer` — valid single-page PDF 1.4, no dependencies. |
-| `backend/src/services/payments/providers.ts` | `interface PaymentGateway { checkoutUrl(payment): string; verifySignature(raw, header): boolean; allowIp(ip): boolean; fetchSettlement(): Promise<SettlementRow[]> }`; `createGateway(config, provider)`; sandbox URLs from `BKASH_BASE_URL`/`NAGAD_BASE_URL` with deterministic fallback; `fetchSettlement()` returns `[]` in degraded mode. |
-| `backend/src/services/payments/payment.service.ts` | `PaymentService` — `listPackages`, `checkout`, `ingestWebhook`, `processWebhookEvent`, `applyState`, `getPayment`, `receipt`, `credits`, `reconcile`, `pauseBoosts`, `resumeBoosts`; `ALLOWED_TRANSITIONS`; `emit` via NotificationService; audit `payment.*`. |
-| `backend/src/services/moderation/moderation.service.ts` | `ModerationService` — `createReport`, `claimCase`, `act`, `applyBan`, `createAppeal`, `getAppeal`, `decideAppeal`, `createTicket`, `listTickets`, `listTicketMessages`, `postTicketMessage`, `opsReply`, queue readers; enforcement ladder + 4-eyes; notifications + audit. |
-| `backend/src/services/notifications/notification.service.ts` | `NotificationService.emit(event, {userId,payload,dedupeKey?,critical?})`, `list`, `markRead`, `registerDevice`; `TEMPLATES` bn/en; quiet hours; chat coalescing; saved-search digest. |
-| `backend/src/services/jobs/registry.ts` | `JOB_SCHEDULES` (12 names → `{intervalMs}` or `{dailyAt:'HH:mm'}`), `JOB_HANDLERS` map, `runJob(name, deps)`, `startScheduler(deps)`, `stopScheduler()`. |
-| `backend/src/services/ops/ops.service.ts` | `OpsService` — operator login/TOTP/IP, KYC queue+view+decide, moderation/appeals/support queues (delegating to ModerationService), audit query + view audit, config get/put + cache invalidation, recon trigger. |
-| `backend/src/middleware/require-operator.ts` | `requireOperator(...roles)` — bearer `typ:'ops'`, operator active, IP allowlist (operator list ∪ `OPS_IP_ALLOWLIST`; empty = allow), attaches `req.operator`. |
-| `backend/src/middleware/client-version.ts` | `clientVersionGate(getMinVersion)` → 426. |
-| `backend/src/routes/payments.ts` | `/boost/packages`, `/boost/checkout` (idempotency), `/payments/:id`, `/payments/:id/receipt`, `/me/credits`; webhook handler factory `paymentWebhook(config, logger, deps)`. |
-| `backend/src/routes/moderation.ts` | `/reports`, `/appeals`, `/appeals/:id`, `/support/tickets*`, `/me/support/tickets`. |
-| `backend/src/routes/notifications.ts` | §Notifications. |
-| `backend/src/routes/ops.ts` | `/ops/auth/login` + all §Ops (operator-gated per row). |
-| `backend/src/types/express.d.ts` | add `operator?: {id:string; role:string}` (edit if file exists). |
-| `backend/src/__tests__/payments.test.ts` | Live Atlas `trust_bazar_test_payments`; harness copied from `chat.test.ts`. |
-| `backend/src/__tests__/moderation.test.ts` | Live Atlas `trust_bazar_test_moderation`. |
-| `backend/src/__tests__/notifications.test.ts` | Live Atlas `trust_bazar_test_notifications` (notifications + jobs). |
-| `backend/src/__tests__/ops.test.ts` | Live Atlas `trust_bazar_test_ops` (operator auth, KYC decide, audit chain, config). |
-
-## 3. Files — modify
-
-| File | Change |
-|---|---|
-| `packages/shared/src/constants/enums.ts` | `OPERATOR_ROLES += 'superadmin'`; add `DEVICE_PLATFORMS = ['fcm','apns']`. |
-| `packages/shared/src/constants/operations.ts` | add `JOB_SCHEDULES` (name, schedule label), `ENFORCEMENT_LADDER` (`warn→suspend`, `suspend→ban`), `OPS_ROLES`. |
-| `packages/shared/src/constants/limits.ts` | `report.dailyCap:5`, `support.messageMax:2000`, `payment.receiptMonths:12`, `credits.expiryMonths:12`. |
-| `packages/shared/src/schemas/payment.ts` | `boostCheckoutSchema = {packageId, listingId, provider, creditApply: z.boolean().default(true)}`. |
-| `packages/shared/src/schemas/moderation.ts` | `reportSchema.comment` (≤1000, replaces `description`); `ticketMessageSchema {body 1..2000}`. |
-| `packages/shared/src/schemas/notifications.ts` | new: `notificationListQuerySchema`, `deviceTokenSchema`. |
-| `packages/shared/src/schemas/ops.ts` | `opsLoginSchema {email, totp:/^\d{6}$/}`, `opsQueueQuerySchema {status?, claim?}`, `reconcileSchema` (empty optional). |
-| `packages/shared/src/schemas/index.ts` | export `./notifications.js`. |
-| `backend/src/config/index.ts` | add optional `BKASH_WEBHOOK_SECRET`, `NAGAD_WEBHOOK_SECRET`, `BKASH_WEBHOOK_IPS`, `NAGAD_WEBHOOK_IPS`, `OPS_IP_ALLOWLIST`, `BKASH_WEBHOOK_SECRET` etc.; `RECON_LOOKBACK_DAYS` default 3. |
-| `backend/src/models/payment.model.ts` | `payments += {listingId(ref Listing, required), gatewayUrl, receiptNo (unique sparse), paidAt, failureReason}`; `credits += {consumedAt?}` not needed — grants only. |
-| `backend/src/models/platform.model.ts` | `notifications += {dedupeKey, count, lastAt}` and channels enum `['inApp','push','sms','ops']`; `supportTickets.messages[] {authorType:'user'\|'operator', authorId, body, at}`, `lastReplyAt`, status enum `open\|pending\|resolved\|closed`; `operatorAccounts.role` enum incl. `seniorModerator`,`superadmin`. |
-| `backend/src/models/user.model.ts` | `pushTokens: [{token, platform:'fcm'\|'apns', at}]`. |
-| `backend/src/models/kyc.model.ts` | `claimedBy`, `lockUntil` for the ops queue. |
-| `backend/src/models/moderation.model.ts` | `moderationCase += {pendingBan:{proposedBy,reasonCode}, banApprovals:[{by,at}]}`. |
-| `backend/src/db/indexes.ts` | `uq_notifications_dedupe {dedupeKey:1} unique sparse`; `idx_support_user_created {userId:1,createdAt:-1}`; `idx_kyc_claim {claimedBy:1,lockUntil:1}`; `uq_payments_receiptNo` unique sparse. |
-| `backend/src/db/validators.ts` | offers already fixed; ensure `supportTickets`/`notifications`/`payments` validators keep `additionalProperties` open (no strict enum on new fields). |
-| `backend/src/services/audit/audit.service.ts` | add `verifyChain(repos): Promise<{ok:boolean;checked:number;brokenAt?:number}>`, `listAudit(repos, filter)`; keep `appendAudit` fail-soft. |
-| `backend/src/services/listings/listing.service.ts` | geo-launch gate on create/update district; expose nothing else. |
-| `backend/src/middleware/enforcement-gate.ts` | allowlist += `POST /api/v1/appeals`, `GET /api/v1/appeals/*`, `/api/v1/support/tickets*`, `GET /api/v1/me/support/tickets`, `GET /api/v1/notifications*`, `POST /api/v1/notifications/*`. |
-| `backend/src/middleware/rate-limit.ts` | register override actions used by new routes (`report_create`, `boost_checkout`, `appeal_create`, `support_create`). |
-| `backend/src/routes/v1.ts` | mount new routers; export `invalidateConfigCache()`; apply `clientVersionGate`. |
-| `backend/src/app.ts` | raw-body payment webhook mount before `express.json`. |
-| `backend/src/server.ts` | `startScheduler`/`stopScheduler` when `WORKER`; no change to HTTP boot order. |
-| `backend/package.json` | add `bullmq` (only loaded when `WORKER && REDIS_URL`). |
-| `API_spec.md` | new §4.7 credits note, §8 device token, §9 report body `comment`, §10 ticket messages, §11 ops login + claim/decide/audit/config/reconcile, §12.4 recon; changelog v1.5. |
-| `database.md` | changelog v2.0: notifications dedupe/count, payments listing/receipt, support ticket messages, KYC claim lock, case pendingBan/approvals, new indexes. |
-| `prompt.md` | PROMPT 13–16 checkboxes ☑ + progress rows 13–16 ☑ (only after verification). PROMPT 12 untouched. |
-
----
-
-## 4. Test matrix
-
-### `payments.test.ts`
-1. Packages list is server-driven from `boostPackages`.
-2. Checkout without `Idempotency-Key` → 400; buyer (non-seller) → 403; foreign listing → 404.
-3. Checkout success → 201, `state:'initiated'`, price from DB, `creditApplied` from grant.
-4. Same idempotency key + same payload → replay (same paymentId); different payload → 409 `idempotency_replay`.
-5. Webhook bad signature → 401, no state change, event archived with `signatureOk:false`.
-6. Valid webhook twice → exactly one activation, one boost window, one `boost.activated` notification.
-7. Failed payment → `state:'failed'`, boost not active, credits remain (`remaining` unchanged).
-8. `success → failed` replay rejected 409; DB still `success`.
-9. Receipt: 200 `application/pdf`, starts `%PDF`; non-success → 409; 12-month expiry → 409.
-10. Suspension pauses boost (`remainingMs>0`, `active:false`); lift resumes with ~same remaining.
-11. Recon orphan → credit grant, **no** activation; known pending success → activated.
-
-### `moderation.test.ts`
-1. Report twice → one report, second `merged:true`; 6th report/day → 429.
-2. Report creates case with 48 h SLA; target detail not leaked back.
-3. Suspended user: chat/listing/boost → 403; appeal + support succeed.
-4. Claim lock: operator A claims; operator B action → 409 `case_claimed`; after lock expiry B can claim.
-5. Warn → `warned` + notification; suspend → `suspended` + boosts paused + 24 h appeal SLA.
-6. Ban first call → 202 pending approval; same operator second call → 403; different senior → banned, listings delisted, threads frozen, boosts forfeited, NID hash retained.
-7. Appeal ownership: stranger GET → 404; decide reverse lifts suspension and appends audit (original intact).
-8. Support: ticket created while banned; owner lists; stranger messages → 404; ops reply adds operator message + `support.reply` notification.
-9. Reporter identity absent from every reported-user-visible payload.
-
-### `notifications.test.ts`
-1. `emit` writes one record with `dedupeKey`; repeat emit → same record (`count` bumped where coalescing).
-2. Quiet hours: push channel dropped, inApp kept; `enforcement.*` bypasses.
-3. Chat messages coalesce per thread (one row, count increments).
-4. Saved-search digest deduped per day.
-5. List/mark-read/device-token flows; foreign notification read → 404.
-6. `lifecycle` job: expired listing → `expired` + notification; run twice → no duplicate/drift.
-7. `offer-expiry` job: past-due pending offer → `expired` + notification; rerun idempotent.
-8. `webhook-drain` retries an unprocessed event exactly once per run.
-9. `sla-scan` flags overdue case → `ops.sla_breach` once.
-10. `audit-verify` on untampered chain → `{ok:true}`.
-
-### `ops.test.ts`
-1. `/ops/*` without operator token → 401; user token → 401.
-2. Login wrong TOTP → 401; correct TOTP → token with role; operator missing TOTP secret → 401.
-3. IP allowlist rejects a non-listed IP.
-4. KYC queue claim + decide approve grants roles; reject requires reasonCode (400), sets 90-day `expiresAt`.
-5. KYC document view writes `kyc.document_view` audit.
-6. Audit append-only: `updateOne`/`deleteOne` on `auditEvents` throws.
-7. Mutate a doc + `audit-verify` → `{ok:false,brokenAt}` + ops notification.
-8. `PUT /ops/config` writes `config.update` audit in the same request; `/config` reflects within 60 s (cache invalidated).
-9. `POST /ops/reconcile/payments` returns summary.
-10. Client-version gate: old header → 426; current/missing → normal.
-
----
-
-## 5. Verification
-
-```powershell
-pnpm install
-pnpm -C backend typecheck
-pnpm -C backend lint
-pnpm -C backend test -- payments
-pnpm -C backend test -- moderation
-pnpm -C backend test -- notifications
-pnpm -C backend test -- ops
-pnpm -C backend test
-pnpm typecheck; pnpm lint; pnpm test
-pnpm -C backend tsx scripts/migrate.ts   # idempotent: 0 created on second run
+```
+web/
+  package.json  tsconfig.json  next.config.ts  postcss.config.mjs  eslint.config.mjs  next-env.d.ts
+  messages/{bn,en}.json
+  src/
+    proxy.ts
+    i18n/{routing.ts,request.ts,navigation.ts}
+    app/{globals.css, sitemap.ts, robots.ts, icon.svg}
+    app/[locale]/
+      layout.tsx  page.tsx  loading.tsx  error.tsx  not-found.tsx
+      category/[slug]/page.tsx
+      search/page.tsx
+      listings/[id]/page.tsx
+      login/page.tsx
+      legal/{terms,privacy,prohibited}/page.tsx
+    components/
+      providers.tsx                       # QueryClientProvider + ToastProvider
+      layout/{site-header.tsx,site-footer.tsx,locale-switcher.tsx,search-bar.tsx}
+      ui/{button.tsx,input.tsx,modal.tsx,toast.tsx,badge.tsx,card.tsx,skeleton.tsx,empty-state.tsx}
+      listings/{listing-card.tsx,listing-grid.tsx,boosted-rail.tsx,gallery.tsx,seller-card.tsx,map-embed.tsx,contact-cta.tsx,trending-rail.tsx}
+      states/{error-state.tsx,offline-banner.tsx}
+    lib/{api.ts,format.ts,seo.ts,categories.ts,types.ts,cn.ts}
+    content/legal.ts
 ```
 
-Acceptance = the four suites green on live Atlas + full backend suite (existing 90 + new) green + root typecheck/lint + migrate idempotent + docs synced.
+## 2. Route contracts
 
----
+| Route | Render | Content |
+|---|---|---|
+| `/[locale]` | ISR 60s | Hero + search bar, top categories, boosted rail (trending `boosted:true`), organic trending grid, trust explainer. Empty/error/offline states. |
+| `/[locale]/category/[slug]` | ISR 60s | Category header (localized name, breadcrumb), `generateStaticParams` from `CATEGORY_SEED`, listings via `/listings/search?categoryId=<derived>`, pagination links, empty state. Unknown slug → `notFound()`. |
+| `/[locale]/search` | SSR | Filters (q, category, district, condition, price, sort) as GET form; results grid; `meta.total`; pagination; empty state; degraded (`X-Degraded`) notice. |
+| `/[locale]/listings/[id]` | ISR 300s | Gallery, title, formatted price, condition badge, description, seller card (verified badge, member since ISO→localized date, "other listings" CTA to search by seller name is out of scope → link to `/search?q=`), map, Contact CTA, boost notice, structured data. 404 → `notFound()`; fetch failure → `ErrorState`. |
+| `/[locale]/login` | static | Phone form shell + legal links + release notice; `robots: noindex`. |
+| `/[locale]/legal/{terms,privacy,prohibited}` | static | Content from `content/legal.ts` (bn/en), prohibited table from `Pre-Launch_Actions.md` §A.2, retention/deletion/offline-deal disclaimers from §A.1/A.3 + PRD NFR-05. |
 
-## 6. Approval checklist
+## 3. SEO
 
-- [ ] Accept in-process scheduler fallback (BullMQ only when `WORKER=true && REDIS_URL`) — tests need no Redis.
-- [ ] Accept operator JWT login endpoint (`POST /ops/auth/login`) and `superadmin` role addition.
-- [ ] Accept hand-rolled PDF (no `pdfkit` dependency) and HTTP-only webhook signature contract (no real bKash/Nagad sandbox calls).
-- [ ] Accept embedded `supportTickets.messages[]` (no new collection) and `notifications.dedupeKey` unique sparse index.
-- [ ] Accept enforcement-gate allowlist expansion (appeals/support/notifications for suspended/banned users).
-- [ ] Approve implementation order and docs sync; PROMPT 12 remains untouched.
+- Root `metadataBase = SITE_URL`; title template `%s · Trust Bazar`.
+- Per page: unique `title`, `description`, `alternates.canonical` + `languages {bn,en}`, OpenGraph (`type`, `locale`, `url`, `images`), Twitter `summary_large_image`.
+- Listing detail: `Product` JSON-LD (`name`, `description`, `image[]`, `offers {price, priceCurrency:'BDT', itemCondition, availability:'InStock', url}`, `brand` omitted, `seller` Organization) + `BreadcrumbList`; images omitted when none.
+- `sitemap.ts`: `/bn`,`/en`, all legal, all category slugs × locales, recent listings (up to 50 via search, failures ignored), lastmod. `robots.ts`: allow `/`, disallow `/api/`, sitemap URL, host.
+- `icon.svg` + `manifest` optional → skip manifest (not required).
+
+## 4. UI kit contract
+
+- `Button`: variants `primary|secondary|ghost|danger`, sizes `sm|md|lg`, `loading`, `asChild`-free (render `<button>`; links use `<Link className={buttonClass()}>`).
+- `Input`: label, hint, error (`aria-invalid`, `aria-describedby`), optional leading slot.
+- `Modal`: native `<dialog>` + backdrop, title, close on Esc/backdrop, focus return.
+- `Toast`: `useToast().push({title, description?, variant})`, region `role="status" aria-live="polite"`, auto-dismiss 4s, max 3 stacked.
+- `Badge`: `neutral|success|warning|danger|brand`, optional dot/icon.
+- `Card`, `Skeleton` (pulse block), `EmptyState` (icon, title, description, action).
+
+## 5. Verification (must run, paste real output)
+
+1. `pnpm install` (web deps resolved).
+2. `pnpm -C web typecheck` → 0 errors.
+3. `pnpm -C web lint` → 0 errors.
+4. `pnpm -C web build` → all routes compiled (static/dynamic as designed).
+5. Backend up (`pnpm -C backend dev`, live Atlas) + one demo seller/listing inserted via a throwaway script **outside** the repo (`.trae/tmp/…`, deleted after) → `pnpm -C web start`; then:
+   - `view-source` / `curl` of `/bn/listings/<id>` contains listing title and `৳` price (SSR).
+   - `/en` contains English nav/hero copy; `/bn` contains Bangla copy; `NEXT_LOCALE` cookie set by switcher.
+   - `/bn/category/mobiles-smartphones` renders listings/empty state; `/bn/search?q=…` renders results.
+   - `/robots.txt`, `/sitemap.xml` respond 200 and include locale URLs.
+   - Lighthouse (mobile) SEO score ≥ 90 on `/bn/listings/<id>`.
+6. Regression: `pnpm typecheck` + `pnpm lint` at root; backend tests unchanged (141/141).
+
+## 6. Doc updates (same change set)
+
+- `prompt.md`: PROMPT 17 checkboxes ☑ + progress row 17 → ☑.
+- `tasks.md`: replace with PROMPT 17 task list, all ☑ after verification.
+- `checklist.md`: add PROMPT 17 verification entry.
+- `.env.example`: add `API_BASE_URL`, `NEXT_PUBLIC_SITE_URL`, `WEB_PORT`.
+- `API_spec.md`: **no endpoint change** (web uses existing public endpoints).
+
+## 7. Risks / guards
+
+- Next 16 `proxy.ts` vs `middleware.ts` naming → verify on build; fallback rename only.
+- Build without a running backend → all fetches fail soft; build must still succeed (explicitly tested).
+- Deterministic category id duplication → guarded by a comment + build-time assertion against `CATEGORY_SEED` slugs only.
+- No secrets in client bundle (`API_BASE_URL` is server-only; only `NEXT_PUBLIC_SITE_URL` is exposed).
